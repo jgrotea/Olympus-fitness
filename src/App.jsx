@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
 
 const API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
-const MODEL = "claude-sonnet-4-20250514";
+const MODEL = "claude-sonnet-4-5";
 
 const DEFAULT_PROFILE = {
   name: "York", weight: 81, height: 184, startWeight: 81,
