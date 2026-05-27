@@ -127,10 +127,10 @@ function SectionTitle({icon,title,subtitle}) {
     </div>
   );
 }
-function ProgressBar({value,max,color}) {
+function ProgressBar({value,max,color,height=4}) {
   return (
-    <div style={{background:STONE,height:4,marginTop:8}}>
-      <div style={{width:`${Math.min((value/max)*100,100)}%`,height:"100%",background:color,transition:"width 0.5s"}}/>
+    <div style={{background:STONE,height,marginTop:8,borderRadius:0}}>
+      <div style={{width:`${Math.min((value/max)*100,100)}%`,height:"100%",background:color,transition:"width 0.6s ease"}}/>
     </div>
   );
 }
@@ -180,12 +180,44 @@ const dangerBtn = {
   color:RED,fontFamily:"Cinzel,serif",fontSize:10,letterSpacing:3,
   cursor:"pointer",fontWeight:500,textTransform:"uppercase",borderRadius:0
 };
+const deleteXBtn = {
+  background:"transparent",border:`1px solid ${STONE}`,color:GOLD_DIM,
+  fontFamily:"Cinzel,serif",fontSize:12,cursor:"pointer",
+  width:24,height:24,display:"flex",alignItems:"center",justifyContent:"center",
+  flexShrink:0,lineHeight:1,borderRadius:0,padding:0,
+};
 
 function FormField({label,value,onChange,type="text"}) {
   return (
     <div style={{marginTop:12}}>
       <div style={{fontFamily:"Cinzel,serif",fontSize:10,color:GOLD_DIM,letterSpacing:3,marginBottom:6}}>{label}</div>
       <input type={type} value={value} onChange={e=>onChange(e.target.value)} style={inputStyle}/>
+    </div>
+  );
+}
+
+function GuideSection({icon,title,children}) {
+  const fontH="Cinzel,serif", fontB="Cormorant Garamond,Georgia,serif";
+  return (
+    <div style={{marginBottom:28}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,paddingBottom:8,borderBottom:`1px solid ${GOLD_DIM}`}}>
+        <span style={{color:GOLD,fontSize:20}}>{icon}</span>
+        <div style={{fontFamily:fontH,fontSize:12,color:GOLD,letterSpacing:4,textTransform:"uppercase"}}>{title}</div>
+      </div>
+      <div style={{fontFamily:fontB,fontSize:15,color:MARBLE,lineHeight:1.8}}>{children}</div>
+    </div>
+  );
+}
+function GuideTip({children}) {
+  const fontB="Cormorant Garamond,Georgia,serif";
+  return <div style={{fontFamily:fontB,fontSize:14,color:GOLD,fontStyle:"italic",marginBottom:6}}>◆ {children}</div>;
+}
+function GuideDef({term,def}) {
+  const fontH="Cinzel,serif", fontB="Cormorant Garamond,Georgia,serif";
+  return (
+    <div style={{marginBottom:10}}>
+      <span style={{fontFamily:fontH,fontSize:10,color:GOLD,letterSpacing:2}}>{term}: </span>
+      <span style={{fontFamily:fontB,fontSize:14,color:MARBLE}}>{def}</span>
     </div>
   );
 }
@@ -212,6 +244,14 @@ export default function Olympus() {
   const [oracleAdvice, setOracleAdvice] = useState(null);
   const [loadingOracle, setLoadingOracle] = useState(false);
   const [photoNote, setPhotoNote] = useState("");
+
+  // Daily IA message
+  const [dailyMessage, setDailyMessage] = useState(()=>ls_get("oly_daily_msg_"+today_str())||null);
+  const [loadingMessage, setLoadingMessage] = useState(false);
+
+  // Ritual IA
+  const [ritualObjective, setRitualObjective] = useState("");
+  const [loadingRitualIA, setLoadingRitualIA] = useState(false);
 
   // Athlete state
   const [athleteSession, setAthleteSession] = useState(()=>ls_get("oly_athlete_"+today_str())||{exercises:[],score:null,notes:"",routineDay:""});
@@ -248,6 +288,7 @@ export default function Olympus() {
   const tdee = Math.round(bmr*profile.activityLevel);
   const proteinGoal = Math.round(2.2*(profile.weight||81));
   const retDone = customRituals.filter(t=>retChecks[t.key]).length;
+  const calPct = tdee>0?Math.min(Math.round((eaten/tdee)*100),999):0;
 
   function saveProfile(p){ls_set("oly_profile",p);setProfile(p);}
   function saveLogs(l){ls_set("oly_logs",l);setLogs(l);}
@@ -256,6 +297,74 @@ export default function Olympus() {
   function saveWorkouts(w){ls_set("oly_workouts",w);setWorkouts(w);}
   function saveAthleteSession(s){ls_set("oly_athlete_"+day,s);setAthleteSession(s);}
   function notify(msg){setNotif(msg);setTimeout(()=>setNotif(null),2800);}
+
+  // ── DAILY IA MESSAGE ──
+  async function generateDailyMessage(currentEaten, currentTdee, currentProtein, currentProteinGoal) {
+    if (loadingMessage) return;
+    setLoadingMessage(true);
+    try {
+      const h = new Date().getHours();
+      const slot = h<10?"mañana temprano":h<14?"mediodía":h<19?"tarde":h<22?"noche temprana":"noche";
+      const pct = currentTdee>0?Math.round((currentEaten/currentTdee)*100):0;
+      const text = await callClaude([{
+        role:"user",
+        content:`Eres coach de nutrición. Genera UN mensaje estratégico corto (máximo 2 oraciones) para este atleta ahora mismo:
+Hora: ${slot} (${h}h)
+Calorías: ${currentEaten}/${currentTdee} kcal (${pct}%)
+Proteína: ${Math.round(currentProtein)}/${currentProteinGoal}g
+Fase: ${profile.phase}
+
+Reglas estrictas:
+- Bajo 30% + mañana/mediodía → qué comer ahora específicamente
+- 50-90% → motivación corta y directa
+- Sobre 100% → qué evitar y cómo compensar
+- Noche + bajo 70% → urgencia, alimento proteico rápido
+- Sin saludos ni nombres. Tono clásico e imperativo.`
+      }], 180);
+      setDailyMessage(text);
+      ls_set("oly_daily_msg_"+today_str(), text);
+    } catch(e) { /* silent */ }
+    setLoadingMessage(false);
+  }
+
+  useEffect(()=>{
+    if (tab==="today" && !dailyMessage && !loadingMessage) {
+      generateDailyMessage(eaten, tdee, totalProtein, proteinGoal);
+    }
+  }, [tab]);
+
+  useEffect(()=>{
+    if (tab==="today") {
+      const saved = ls_get("oly_daily_msg_"+today_str());
+      if (!saved) generateDailyMessage(eaten, tdee, totalProtein, proteinGoal);
+    }
+  }, [eaten, burned]);
+
+  // ── RITUAL IA ──
+  async function generateRitualsIA() {
+    if (!ritualObjective.trim()) return;
+    setLoadingRitualIA(true);
+    try {
+      const text = await callClaude([{
+        role:"user",
+        content:`Genera 5 rituales diarios personalizados para este objetivo:
+Objetivo: ${ritualObjective}
+Perfil: ${profile.weight}kg, fase "${profile.phase}", meta: "${profile.goal}"
+
+Responde SOLO JSON sin backticks:
+{"rituales":[{"label":"","desc":"","icon":"◈"}]}`
+      }], 500);
+      const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
+      const generated = parsed.rituales.map((r,i)=>({
+        key:"ai_"+Date.now()+"_"+i,
+        label:r.label, desc:r.desc, icon:r.icon||"◈"
+      }));
+      const updated=[...customRituals,...generated];
+      ls_set("oly_rituals",updated); setCustomRituals(updated);
+      setRitualObjective(""); notify(`${generated.length} rituales añadidos`);
+    } catch(e){notify("Error IA: "+e.message);}
+    setLoadingRitualIA(false);
+  }
 
   function calcCal(actId,mins,kg){
     const a=ACTIVITIES.find(x=>x.id===actId);
@@ -269,6 +378,21 @@ export default function Olympus() {
     saveLogs({...logs,[day]:newLog});
     setActForm({type:"",duration:""});setShowActForm(false);
     notify(`${a.label} · ${cal} kcal`);
+  }
+  function removeActivity(idx){
+    const acts=(todayLog.activities||[]).filter((_,i)=>i!==idx);
+    saveLogs({...logs,[day]:{...todayLog,activities:acts}});
+  }
+  function removeFood(idx){
+    const foods=(todayLog.foods||[]).filter((_,i)=>i!==idx);
+    saveLogs({...logs,[day]:{...todayLog,foods}});
+    ls_set("oly_daily_msg_"+today_str(),null); setDailyMessage(null);
+  }
+  function removeExercise(idx){
+    const exs=(athleteSession.exercises||[]).filter((_,i)=>i!==idx);
+    const updated={...athleteSession,exercises:exs};
+    saveAthleteSession(updated);
+    saveWorkouts({...workouts,[day]:updated});
   }
 
   async function analyzeFood(){
@@ -285,8 +409,10 @@ Comidas: ${foodText}`
       }], 700);
       const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
       setFoodResult(parsed);
-      saveLogs({...logs,[day]:{...todayLog,foods:[...(todayLog.foods||[]),{description:foodText,calories:parsed.total_calories,protein:parsed.total_protein,sodium:parsed.total_sodium,items:parsed.items}]}});
+      const newLogs={...logs,[day]:{...todayLog,foods:[...(todayLog.foods||[]),{description:foodText,calories:parsed.total_calories,protein:parsed.total_protein,sodium:parsed.total_sodium,items:parsed.items}]}};
+      saveLogs(newLogs);
       setFoodText("");
+      ls_set("oly_daily_msg_"+today_str(),null); setDailyMessage(null);
     } catch(e) { notify("Error analizando comida: "+e.message); }
     setLoadingFood(false);
   }
@@ -318,11 +444,11 @@ Comidas: ${foodText}`
     setLoadingOracle(true);setOracleAdvice(null);
     try {
       const l7=last7();
-      const ctx={profile,avg_burned:Math.round(l7.reduce((s,d)=>s+d.burned,0)/7),avg_eaten:Math.round(l7.reduce((s,d)=>s+d.eaten,0)/7),avg_water:((l7.reduce((s,d)=>s+d.water,0)/7)/1000).toFixed(1)+"L",avg_protein:Math.round(l7.reduce((s,d)=>s+(d.protein||0),0)/7),retention_today:`${retDone}/${customRituals.length}`,photos_count:photos.length,workouts_this_week:Object.keys(workouts).filter(k=>{const d=new Date(k);const now=new Date();return now-d<7*86400000;}).length};
+      const ctx={profile,avg_burned:Math.round(l7.reduce((s,d)=>s+d.burned,0)/7),avg_eaten:Math.round(l7.reduce((s,d)=>s+d.eaten,0)/7),avg_water:((l7.reduce((s,d)=>s+d.water,0)/7)/1000).toFixed(1)+"L",avg_protein:Math.round(l7.reduce((s,d)=>s+(d.protein||0),0)/7),retention_today:`${retDone}/${customRituals.length}`,photos_count:photos.length,workouts_this_week:Object.keys(workouts).filter(k=>{const d=new Date(k);return new Date()-d<7*86400000;}).length};
       const content=photos.length>0&&photos[0].data?[
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:photos[0].data.split(",")[1]}},
-        {type:"text",text:`Coach experto en composición corporal e hipertrofia. Analiza la foto y datos:\n${JSON.stringify(ctx)}\n\nFase: ${profile.phase}\nMeta: ${profile.goal}\nRutina: ${profile.routineType}\n\nResponde:\n## ANÁLISIS VISUAL\n## DIAGNÓSTICO\n## RECOMENDACIONES INMEDIATAS\n## ALERTAS\n## SIGUIENTE OBJETIVO MEDIBLE (14 días)\n\nSé directo, profesional y específico.`}
-      ]:`Coach experto en composición corporal e hipertrofia. Analiza estos datos:\n${JSON.stringify(ctx)}\n\nFase: ${profile.phase}, Meta: ${profile.goal}, Rutina: ${profile.routineType}\n\n## DIAGNÓSTICO\n## RECOMENDACIONES INMEDIATAS\n## ALERTAS\n## SIGUIENTE OBJETIVO MEDIBLE (14 días)\n\nSé directo. Recomienda subir foto para análisis visual.`;
+        {type:"text",text:`Coach experto. Analiza foto y datos:\n${JSON.stringify(ctx)}\nFase: ${profile.phase}\nMeta: ${profile.goal}\nRutina: ${profile.routineType}\n\n## ANÁLISIS VISUAL\n## DIAGNÓSTICO\n## RECOMENDACIONES INMEDIATAS\n## ALERTAS\n## SIGUIENTE OBJETIVO (14 días)`}
+      ]:`Coach experto. Datos:\n${JSON.stringify(ctx)}\nFase: ${profile.phase}, Meta: ${profile.goal}, Rutina: ${profile.routineType}\n\n## DIAGNÓSTICO\n## RECOMENDACIONES INMEDIATAS\n## ALERTAS\n## SIGUIENTE OBJETIVO (14 días)`;
       const text = await callClaude([{role:"user",content}], 1200);
       setOracleAdvice(text);
     } catch(e){notify("Error del oráculo: "+e.message);}
@@ -339,14 +465,12 @@ Comidas: ${foodText}`
     });
   }
 
-  // ATHLETE functions
   function addExercise(){
     if(!exForm.name||!exForm.weight) return;
     const exercise={name:exForm.name,sets:parseInt(exForm.sets)||3,reps:parseInt(exForm.reps)||6,weight:parseFloat(exForm.weight),oneRM:calc1RM(parseFloat(exForm.weight),parseInt(exForm.reps)||6),timestamp:Date.now()};
     const updated={...athleteSession,exercises:[...(athleteSession.exercises||[]),exercise]};
     saveAthleteSession(updated);
-    const wUpdated={...workouts,[day]:updated};
-    saveWorkouts(wUpdated);
+    saveWorkouts({...workouts,[day]:updated});
     setExForm({name:"",sets:"3",reps:"6",weight:""});
     notify(`${exercise.name} · 1RM: ${exercise.oneRM}kg`);
   }
@@ -358,79 +482,69 @@ Comidas: ${foodText}`
       const volTotal=athleteSession.exercises.reduce((s,e)=>s+e.sets*e.reps*e.weight,0);
       const text = await callClaude([{
         role:"user",
-        content:`Eres coach de hipertrofia. Analiza esta sesión:
+        content:`Coach de hipertrofia. Sesión:
 Rutina: ${athleteSession.routineDay||profile.routineType}
 Ejercicios: ${JSON.stringify(athleteSession.exercises)}
-Volumen total: ${Math.round(volTotal)}kg
-Perfil: ${profile.weight}kg, ${profile.age} años, fase: ${profile.phase}
+Volumen: ${Math.round(volTotal)}kg
+Perfil: ${profile.weight}kg, ${profile.age}a, fase: ${profile.phase}
 
-Responde SOLO JSON sin backticks:
-{"score":8,"volumen_total":${Math.round(volTotal)},"intensidad":"alta","ejercicios_hipertrofia":[{"nombre":"","evaluacion":""}],"mejoras":[""],"alertas":[""],"proximo_objetivo":"","consejo_recuperacion":""}`
-      }], 900);
+SOLO JSON sin backticks:
+{"score":8,"volumen_total":${Math.round(volTotal)},"intensidad":"alta","mejoras":[""],"alertas":[""],"proximo_objetivo":"","consejo_recuperacion":""}`
+      }], 800);
       const parsed=JSON.parse(text.replace(/```json|```/g,"").trim());
       setAthleteAnalysis(parsed);
       const updated={...athleteSession,score:parsed.score,analysis:parsed};
       saveAthleteSession(updated);
       saveWorkouts({...workouts,[day]:updated});
-    } catch(e){notify("Error analizando sesión: "+e.message);}
+    } catch(e){notify("Error: "+e.message);}
     setLoadingAthlete(false);
   }
 
   function getExerciseHistory(name){
     return Object.entries(workouts)
-      .sort(([a],[b])=>a.localeCompare(b))
-      .slice(-8)
+      .sort(([a],[b])=>a.localeCompare(b)).slice(-8)
       .map(([date,session])=>{
         const ex=(session.exercises||[]).find(e=>e.name.toLowerCase()===name.toLowerCase());
-        return {date:date.slice(5),oneRM:ex?.oneRM||0,weight:ex?.weight||0,sets:ex?.sets||0,reps:ex?.reps||0};
-      })
-      .filter(d=>d.oneRM>0);
+        return {date:date.slice(5),oneRM:ex?.oneRM||0};
+      }).filter(d=>d.oneRM>0);
   }
 
-  // PLANNING functions
   function getDaysInMonth(y,m){return new Date(y,m+1,0).getDate();}
   function getFirstDay(y,m){const d=new Date(y,m,1).getDay();return d===0?6:d-1;}
 
   async function generateWeeklyPlan(){
     setLoadingPlan(true);setWeeklyPlan(null);
     try {
-      const weekNum=Math.ceil(new Date().getDate()/7);
       const totalWeeks=Math.floor((new Date()-new Date(new Date().getFullYear(),0,1))/604800000);
       const mesocycle=Math.floor(totalWeeks/8)+1;
       const weekInMeso=totalWeeks%8+1;
       const text = await callClaude([{
         role:"user",
-        content:`Genera plan semanal periodizado:
+        content:`Plan semanal periodizado:
 Rutina: ${profile.routineType||"Push Pull Legs"}
-Días entreno/semana: ${profile.trainingDays||6}
-Mesociclo: ${mesocycle} (semana ${weekInMeso}/8, cada 8 semanas)
-Semana del mes: ${weekNum}
-Fase: ${profile.phase}
-Peso: ${profile.weight}kg, Meta: ${profile.goal}
+Días: ${profile.trainingDays||6}/semana
+Mesociclo: ${mesocycle} (semana ${weekInMeso}/8)
+Fase: ${profile.phase}, Peso: ${profile.weight}kg
 
-Responde SOLO JSON sin backticks:
+SOLO JSON sin backticks:
 {"mesociclo":${mesocycle},"semana_mesociclo":${weekInMeso},"deload":false,"dias":[{"dia":"Lunes","tipo":"Push","musculos":["Pecho"],"ejercicios_clave":["Press banca 4x6-8"],"volumen_series":16,"rep_range":"6-8","intensidad_pct":85,"notas":""}],"objetivo_semana":"","consejo_periodizacion":""}`
       }], 1400);
       const parsed=JSON.parse(text.replace(/```json|```/g,"").trim());
-      setWeeklyPlan(parsed);
-      ls_set("oly_weekly_plan",parsed);
-      notify("Plan semanal generado");
-    } catch(e){notify("Error generando plan: "+e.message);}
+      setWeeklyPlan(parsed); ls_set("oly_weekly_plan",parsed);
+      notify("Plan generado");
+    } catch(e){notify("Error: "+e.message);}
     setLoadingPlan(false);
   }
 
   function toggleCalNote(dateStr){
     if(selectedCalDay===dateStr){setSelectedCalDay(null);return;}
-    setSelectedCalDay(dateStr);
-    setCalNoteInput(calDayNote[dateStr]||"");
+    setSelectedCalDay(dateStr); setCalNoteInput(calDayNote[dateStr]||"");
   }
   function saveCalNote(){
     if(!selectedCalDay) return;
     const updated={...calDayNote,[selectedCalDay]:calNoteInput};
-    ls_set("oly_cal_notes",updated);
-    setCalDayNote(updated);
-    setSelectedCalDay(null);
-    notify("Nota guardada");
+    ls_set("oly_cal_notes",updated); setCalDayNote(updated);
+    setSelectedCalDay(null); notify("Nota guardada");
   }
 
   const last7Data=last7();
@@ -440,7 +554,7 @@ Responde SOLO JSON sin backticks:
 
   const tabBtn=(id,label)=>(
     <button key={id} onClick={()=>setTab(id)} style={{
-      padding:"10px 10px",background:"transparent",border:"none",
+      padding:"10px 8px",background:"transparent",border:"none",
       borderBottom:tab===id?`2px solid ${GOLD}`:"2px solid transparent",
       color:tab===id?GOLD:"#888",fontFamily:fontH,fontSize:9,
       letterSpacing:2,textTransform:"uppercase",cursor:"pointer",fontWeight:600,
@@ -448,7 +562,7 @@ Responde SOLO JSON sin backticks:
     }}>{label}</button>
   );
 
-  const TABS=[["today","Hoy"],["retention","Rituales"],["nutrition","Ambrosía"],["athlete","Atleta"],["planning","Planificación"],["progress","Progreso"],["oracle","Oráculo"],["stats","Crónicas"],["settings","Templo"]];
+  const TABS=[["today","Hoy"],["retention","Rituales"],["nutrition","Ambrosía"],["athlete","Atleta"],["planning","Planificación"],["progress","Progreso"],["oracle","Oráculo"],["stats","Crónicas"],["settings","Templo"],["guide","Guía"]];
 
   return (
     <div style={{minHeight:"100vh",background:`radial-gradient(ellipse at top,#1a1612,${BG_DARK})`,color:MARBLE,paddingBottom:80,fontFamily:fontB}}>
@@ -463,7 +577,7 @@ Responde SOLO JSON sin backticks:
 
       <div style={{background:`linear-gradient(180deg,#1c1814,${BG_DARK})`,borderBottom:`1px solid ${STONE}`,padding:"24px 16px 0",position:"relative"}}>
         <div style={{position:"absolute",top:12,right:16}}><GreekBust size={60}/></div>
-        <div style={{maxWidth:620,margin:"0 auto"}}>
+        <div style={{maxWidth:640,margin:"0 auto"}}>
           <div style={{textAlign:"center",marginBottom:4}}>
             <div style={{fontFamily:fontH,fontSize:26,color:GOLD,letterSpacing:12,fontWeight:600}}>OLYMPUS</div>
             <div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:6,marginTop:2}}>VIRTUS · DISCIPLINA · GLORIA</div>
@@ -488,32 +602,59 @@ Responde SOLO JSON sin backticks:
         </div>
       </div>
 
-      <div style={{padding:"20px 16px",maxWidth:620,margin:"0 auto"}}>
+      <div style={{padding:"20px 16px",maxWidth:640,margin:"0 auto"}}>
 
         {/* ── HOY ── */}
         {tab==="today"&&<>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:18}}>
+          {/* Hero: barra calórica grande */}
+          <div style={{...panel,borderColor:eaten>tdee?RED:eaten>tdee*0.8?GOLD:STONE,marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+              <div style={{fontFamily:fontH,fontSize:11,color:GOLD,letterSpacing:4}}>EDICTO CALÓRICO</div>
+              <div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:2}}>{profile.phase}</div>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",margin:"8px 0 4px"}}>
+              <div style={{fontFamily:fontH,fontSize:34,color:eaten>tdee?RED:GOLD,fontWeight:700,lineHeight:1}}>{eaten}</div>
+              <div style={{fontFamily:fontH,fontSize:14,color:MARBLE}}>/ {tdee} <span style={{fontSize:10,color:GOLD_DIM}}>kcal</span></div>
+            </div>
+            <ProgressBar value={eaten} max={tdee} color={eaten>tdee?RED:eaten>tdee*0.8?GOLD:"#6a8a5a"} height={10}/>
+            <div style={{display:"flex",justifyContent:"space-between",marginTop:6}}>
+              <span style={{fontFamily:"Inter,sans-serif",fontSize:12,color:"#777"}}>{calPct}% completado</span>
+              <span style={{fontFamily:"Inter,sans-serif",fontSize:12,color:GOLD_DIM}}>{eaten>tdee?`+${eaten-tdee} exceso`:`${tdee-eaten} restantes`}</span>
+            </div>
+            {/* IA message */}
+            <div style={{marginTop:12,padding:12,background:"#0e0c0a",border:`1px solid ${STONE}`,minHeight:48}}>
+              {loadingMessage?(
+                <div style={{fontFamily:fontB,fontStyle:"italic",color:GOLD_DIM,fontSize:13,textAlign:"center",padding:"4px 0"}}>El oráculo contempla tu día...</div>
+              ):dailyMessage?(
+                <div style={{fontFamily:fontB,fontStyle:"italic",color:MARBLE,fontSize:14,lineHeight:1.6}}>{dailyMessage}</div>
+              ):(
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontFamily:fontB,fontStyle:"italic",color:"#555",fontSize:13}}>— Consulta el dictamen del día —</span>
+                  <button onClick={()=>generateDailyMessage(eaten,tdee,totalProtein,proteinGoal)} style={{...ghostBtn,padding:"4px 10px",fontSize:9}}>Generar</button>
+                </div>
+              )}
+            </div>
+            {dailyMessage&&(
+              <button onClick={()=>{ls_set("oly_daily_msg_"+today_str(),null);setDailyMessage(null);generateDailyMessage(eaten,tdee,totalProtein,proteinGoal);}} style={{...ghostBtn,width:"100%",marginTop:8,fontSize:9,padding:"6px"}}>↻ Actualizar mensaje</button>
+            )}
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:14}}>
             <BigStat icon="🔥" val={burned} label="Quemadas" color={GOLD}/>
-            <BigStat icon="🍇" val={eaten} label="Comidas" color={MARBLE}/>
+            <BigStat icon="◉" val={`${Math.round(totalProtein)}g`} label="Proteína" color={totalProtein>=proteinGoal?GOLD:MARBLE} small/>
             <BigStat icon={balance<=0?"↓":"↑"} val={Math.abs(balance)} label={balance<=0?"Déficit":"Exceso"} color={balance<=0?GOLD:RED}/>
             <BigStat icon="ψ" val={`${(water/1000).toFixed(1)}L`} label="Hidor" color={MARBLE} small/>
           </div>
-          <div style={panel}>
-            <SectionTitle icon="◈" title="Edicto Calórico" subtitle={`Meta: ${tdee} kcal · ${profile.phase}`}/>
-            <ProgressBar value={eaten} max={tdee} color={eaten>tdee?RED:GOLD}/>
-            <div style={{display:"flex",justifyContent:"space-between",marginTop:6}}>
-              <span style={{fontFamily:"Inter,sans-serif",fontSize:12,color:"#777"}}>{eaten} kcal consumidas</span>
-              <span style={{fontFamily:"Inter,sans-serif",fontSize:12,color:GOLD_DIM}}>{eaten>0?`${Math.round((eaten/tdee)*100)}%`:"—"}</span>
-            </div>
-          </div>
+
           <div style={panel}>
             <SectionTitle icon="◉" title="Proteína · Hipertrofia" subtitle={`Meta: ${proteinGoal}g · 2.2g/kg`}/>
-            <ProgressBar value={totalProtein} max={proteinGoal} color={totalProtein>=proteinGoal?GOLD:"#6a8a6a"}/>
+            <ProgressBar value={totalProtein} max={proteinGoal} color={totalProtein>=proteinGoal?GOLD:"#5a7a5a"} height={6}/>
             <div style={{display:"flex",justifyContent:"space-between",marginTop:6}}>
               <span style={{fontFamily:"Inter,sans-serif",fontSize:12,color:"#777"}}>{Math.round(totalProtein)}g consumidos</span>
-              <span style={{fontFamily:"Inter,sans-serif",fontSize:12,color:totalProtein>=proteinGoal?GOLD:GOLD_DIM}}>{proteinGoal-Math.round(totalProtein)>0?`Faltan ${proteinGoal-Math.round(totalProtein)}g`:"Meta cumplida"}</span>
+              <span style={{fontFamily:"Inter,sans-serif",fontSize:12,color:totalProtein>=proteinGoal?GOLD:GOLD_DIM}}>{proteinGoal-Math.round(totalProtein)>0?`Faltan ${proteinGoal-Math.round(totalProtein)}g`:"✓ Meta cumplida"}</span>
             </div>
           </div>
+
           <div style={panel}>
             <SectionTitle icon="ψ" title="Hidor · Hidratación" subtitle="META · 2.5—3L"/>
             <div style={{display:"flex",gap:8,marginBottom:10,marginTop:10}}>
@@ -526,6 +667,7 @@ Responde SOLO JSON sin backticks:
             </div>
             <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#666",marginTop:6}}>{(water/1000).toFixed(2)}L de 3L</div>
           </div>
+
           <div style={panel}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <SectionTitle icon="⚔" title="Ágon · Entrenamiento"/>
@@ -547,8 +689,8 @@ Responde SOLO JSON sin backticks:
             {(todayLog.activities||[]).length===0
               ?<div style={{color:"#555",textAlign:"center",padding:"20px 0",fontStyle:"italic",fontFamily:fontB}}>— Sin gestas registradas hoy —</div>
               :(todayLog.activities||[]).map((a,i)=>(
-                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 14px",marginTop:8,background:"#0e0c0a",border:`1px solid ${STONE}`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:14}}>
+                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 14px",marginTop:8,background:"#0e0c0a",border:`1px solid ${STONE}`,gap:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:14,flex:1}}>
                     <span style={{color:GOLD,fontSize:20,fontFamily:fontH}}>{a.glyph}</span>
                     <div>
                       <div style={{fontFamily:fontH,fontSize:12,letterSpacing:2,color:MARBLE,textTransform:"uppercase"}}>{a.label}</div>
@@ -556,10 +698,12 @@ Responde SOLO JSON sin backticks:
                     </div>
                   </div>
                   <div style={{fontFamily:fontH,color:GOLD,fontWeight:600,fontSize:16}}>-{a.calories}</div>
+                  <button style={deleteXBtn} onClick={()=>removeActivity(i)} title="Eliminar">×</button>
                 </div>
               ))
             }
           </div>
+
           <div style={panel}>
             <SectionTitle icon="☥" title="Pondus · Peso del día"/>
             <div style={{display:"flex",gap:8,marginTop:10}}>
@@ -581,15 +725,33 @@ Responde SOLO JSON sin backticks:
               <SectionTitle icon="ψ" title="Rituales Anti-Edema"/>
               <button onClick={()=>setEditingRituals(!editingRituals)} style={ghostBtn}>{editingRituals?"Cerrar":"Editar"}</button>
             </div>
-            <p style={{fontFamily:fontB,color:"#999",fontSize:15,fontStyle:"italic",lineHeight:1.5,marginTop:8}}>Combina electrolitos, hidratación, descanso y bajo sodio para eliminar la retención extramuscular.</p>
-            <div style={{marginTop:14}}>
+            <div style={{marginTop:10}}>
               <span style={{fontFamily:fontH,fontSize:11,color:retDone===customRituals.length?GOLD:"#888",letterSpacing:3}}>{retDone}/{customRituals.length} CUMPLIDO {retDone===customRituals.length?"· VIRTUOSO":""}</span>
             </div>
-            <ProgressBar value={retDone} max={customRituals.length||1} color={GOLD}/>
+            <ProgressBar value={retDone} max={customRituals.length||1} color={GOLD} height={6}/>
+          </div>
+
+          {/* IA ritual generator */}
+          <div style={{...panel,borderColor:GOLD_DIM}}>
+            <SectionTitle icon="◉" title="Generar Rituales con IA"/>
+            <p style={{fontFamily:fontB,fontStyle:"italic",color:"#888",fontSize:14,lineHeight:1.5,marginTop:6,marginBottom:10}}>Escribe tu objetivo y la IA crea rituales diarios personalizados.</p>
+            <input
+              placeholder="Ej: reducir retención de líquidos, mejorar recuperación, dormir mejor..."
+              value={ritualObjective}
+              onChange={e=>setRitualObjective(e.target.value)}
+              style={inputStyle}
+            />
+            <button
+              onClick={generateRitualsIA}
+              disabled={loadingRitualIA||!ritualObjective.trim()}
+              style={{...primaryBtn,width:"100%",marginTop:10,opacity:loadingRitualIA?0.5:1}}
+            >
+              {loadingRitualIA?"El oráculo diseña tus rituales...":"◈ Generar Rituales con IA"}
+            </button>
           </div>
 
           {editingRituals&&(
-            <div style={{...panel,borderColor:GOLD_DIM}}>
+            <div style={{...panel,borderColor:STONE}}>
               <SectionTitle icon="◈" title="Gestionar Rituales"/>
               {customRituals.map((r,i)=>(
                 <div key={r.key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${STONE}`}}>
@@ -601,16 +763,16 @@ Responde SOLO JSON sin backticks:
                 </div>
               ))}
               <div style={{marginTop:14,display:"grid",gridTemplateColumns:"1fr 1fr 60px",gap:8}}>
-                <input placeholder="Ritual..." value={newRitual.label} onChange={e=>setNewRitual({...newRitual,label:e.target.value})} style={{...inputStyle}}/>
-                <input placeholder="Descripción..." value={newRitual.desc} onChange={e=>setNewRitual({...newRitual,desc:e.target.value})} style={{...inputStyle}}/>
-                <input placeholder="⚘" value={newRitual.icon} onChange={e=>setNewRitual({...newRitual,icon:e.target.value})} style={{...inputStyle}}/>
+                <input placeholder="Ritual..." value={newRitual.label} onChange={e=>setNewRitual({...newRitual,label:e.target.value})} style={inputStyle}/>
+                <input placeholder="Descripción..." value={newRitual.desc} onChange={e=>setNewRitual({...newRitual,desc:e.target.value})} style={inputStyle}/>
+                <input placeholder="⚘" value={newRitual.icon} onChange={e=>setNewRitual({...newRitual,icon:e.target.value})} style={inputStyle}/>
               </div>
               <button onClick={()=>{
                 if(!newRitual.label) return;
                 const r={key:"custom_"+Date.now(),label:newRitual.label,desc:newRitual.desc,icon:newRitual.icon||"◈"};
                 const u=[...customRituals,r];ls_set("oly_rituals",u);setCustomRituals(u);
                 setNewRitual({label:"",desc:"",icon:"◈"});notify("Ritual añadido");
-              }} style={{...primaryBtn,width:"100%",marginTop:10}}>+ Añadir Ritual</button>
+              }} style={{...primaryBtn,width:"100%",marginTop:10}}>+ Añadir Manual</button>
             </div>
           )}
 
@@ -667,7 +829,7 @@ Responde SOLO JSON sin backticks:
         {tab==="nutrition"&&<>
           <div style={{...panel,borderColor:totalProtein>=proteinGoal?GOLD:STONE}}>
             <SectionTitle icon="◉" title="Proteína del Día" subtitle={`Meta hipertrofia: ${proteinGoal}g · 2.2g/kg`}/>
-            <ProgressBar value={totalProtein} max={proteinGoal} color={totalProtein>=proteinGoal?GOLD:"#5a7a5a"}/>
+            <ProgressBar value={totalProtein} max={proteinGoal} color={totalProtein>=proteinGoal?GOLD:"#5a7a5a"} height={6}/>
             <div style={{display:"flex",justifyContent:"space-between",marginTop:8}}>
               <span style={{fontFamily:"Inter,sans-serif",fontSize:13,color:MARBLE,fontWeight:600}}>{Math.round(totalProtein)}g</span>
               <span style={{fontFamily:"Inter,sans-serif",fontSize:12,color:totalProtein>=proteinGoal?GOLD:"#888"}}>{totalProtein>=proteinGoal?"✓ Meta cumplida":`${Math.round(proteinGoal-totalProtein)}g restantes`}</span>
@@ -675,7 +837,7 @@ Responde SOLO JSON sin backticks:
           </div>
           <div style={panel}>
             <SectionTitle icon="🍇" title="Ambrosía · Registrar Comida"/>
-            <textarea placeholder={"Describe lo que comiste...\n\nEj: desayuno avena con plátano y 2 huevos\nalmuerzo arroz integral con pollo 200g\nsnack puñado de almendras"} value={foodText} onChange={e=>setFoodText(e.target.value)} rows={5}
+            <textarea placeholder={"Describe lo que comiste...\n\nEj: avena con plátano y 2 huevos\narroz integral con pollo 200g\nalmendras"} value={foodText} onChange={e=>setFoodText(e.target.value)} rows={5}
               style={{...inputStyle,resize:"none",padding:14,fontFamily:fontB,fontSize:15,marginTop:10}}/>
             <button onClick={analyzeFood} disabled={loadingFood||!foodText.trim()} style={{...primaryBtn,width:"100%",marginTop:10,opacity:loadingFood?0.5:1}}>
               {loadingFood?"Invocando al oráculo...":"◈ Analizar con IA"}
@@ -707,11 +869,12 @@ Responde SOLO JSON sin backticks:
             <div style={panel}>
               <SectionTitle icon="📜" title="Registro del Día"/>
               {(todayLog.foods||[]).map((f,i)=>(
-                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${STONE}`}}>
-                  <span style={{fontFamily:fontB,fontSize:14,color:"#999",flex:1,marginRight:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontStyle:"italic"}}>{f.description}</span>
-                  <div style={{display:"flex",gap:14,flexShrink:0}}>
+                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${STONE}`,gap:8}}>
+                  <span style={{fontFamily:fontB,fontSize:14,color:"#999",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontStyle:"italic"}}>{f.description}</span>
+                  <div style={{display:"flex",gap:12,flexShrink:0,alignItems:"center"}}>
                     <span style={{fontFamily:fontH,color:"#5a7a5a",fontSize:12}}>{Math.round(f.protein||0)}g P</span>
                     <span style={{fontFamily:fontH,color:GOLD,fontSize:13}}>{f.calories} kcal</span>
+                    <button style={deleteXBtn} onClick={()=>removeFood(i)} title="Eliminar">×</button>
                   </div>
                 </div>
               ))}
@@ -735,7 +898,6 @@ Responde SOLO JSON sin backticks:
               <input value={athleteSession.routineDay||""} onChange={e=>saveAthleteSession({...athleteSession,routineDay:e.target.value})} placeholder="Ej: Push · Pecho & Hombros" style={inputStyle}/>
             </div>
           </div>
-
           <div style={panel}>
             <SectionTitle icon="◈" title="Registrar Ejercicio" subtitle="Rango óptimo hipertrofia: 6-8 reps"/>
             <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr",gap:8,marginTop:10}}>
@@ -751,31 +913,30 @@ Responde SOLO JSON sin backticks:
             )}
             <button onClick={addExercise} style={{...primaryBtn,width:"100%",marginTop:10}}>+ Inscribir Ejercicio</button>
           </div>
-
           {(athleteSession.exercises||[]).length>0&&(
             <div style={panel}>
               <SectionTitle icon="✦" title="Ejercicios de la Sesión"/>
               {(athleteSession.exercises||[]).map((ex,i)=>(
-                <div key={i} style={{padding:"12px 0",borderBottom:`1px solid ${STONE}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div>
+                <div key={i} style={{padding:"12px 0",borderBottom:`1px solid ${STONE}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                  <div style={{flex:1}}>
                     <div style={{fontFamily:fontH,fontSize:12,letterSpacing:2,color:MARBLE,textTransform:"uppercase"}}>{ex.name}</div>
-                    <div style={{fontFamily:fontB,fontSize:14,fontStyle:"italic",color:"#777",marginTop:2}}>{ex.sets} series × {ex.reps} reps · {ex.weight}kg</div>
+                    <div style={{fontFamily:fontB,fontSize:14,fontStyle:"italic",color:"#777",marginTop:2}}>{ex.sets}×{ex.reps} · {ex.weight}kg</div>
                   </div>
                   <div style={{textAlign:"right"}}>
                     <div style={{fontFamily:fontH,fontSize:16,color:GOLD,fontWeight:600}}>{ex.oneRM}kg</div>
-                    <div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:2}}>1RM EST.</div>
+                    <div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:2}}>1RM</div>
                   </div>
+                  <button style={deleteXBtn} onClick={()=>removeExercise(i)} title="Eliminar">×</button>
                 </div>
               ))}
               <div style={{display:"flex",gap:10,marginTop:14}}>
                 <button onClick={analyzeSession} disabled={loadingAthlete} style={{...primaryBtn,flex:1,opacity:loadingAthlete?0.5:1}}>
                   {loadingAthlete?"Analizando...":"◈ Análisis IA Hipertrofia"}
                 </button>
-                <button onClick={()=>setShow1RM(!show1RM)} style={{...ghostBtn}}>1RM</button>
+                <button onClick={()=>setShow1RM(!show1RM)} style={ghostBtn}>1RM</button>
               </div>
             </div>
           )}
-
           {show1RM&&(
             <div style={panel}>
               <SectionTitle icon="↯" title="Calculadora 1RM · Epley"/>
@@ -805,7 +966,6 @@ Responde SOLO JSON sin backticks:
               )}
             </div>
           )}
-
           {athleteAnalysis&&(
             <div style={{...panel,borderColor:GOLD}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
@@ -815,25 +975,13 @@ Responde SOLO JSON sin backticks:
                   <div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:2}}>PUNTUACIÓN</div>
                 </div>
               </div>
-              <div style={{fontFamily:fontH,fontSize:10,color:GOLD_DIM,letterSpacing:2,marginBottom:4}}>INTENSIDAD: <span style={{color:MARBLE}}>{athleteAnalysis.intensidad?.toUpperCase()}</span></div>
-              <div style={{fontFamily:fontH,fontSize:10,color:GOLD_DIM,letterSpacing:2,marginBottom:12}}>VOLUMEN: <span style={{color:MARBLE}}>{athleteAnalysis.volumen_total} kg</span></div>
-              {athleteAnalysis.mejoras?.length>0&&(
-                <div style={{marginBottom:10}}>
-                  <div style={{fontFamily:fontH,fontSize:10,color:GOLD,letterSpacing:3,marginBottom:6}}>MEJORAS SUGERIDAS</div>
-                  {athleteAnalysis.mejoras.map((m,i)=><div key={i} style={{fontFamily:fontB,fontSize:14,color:MARBLE,marginBottom:4}}>· {m}</div>)}
-                </div>
-              )}
-              {athleteAnalysis.alertas?.length>0&&(
-                <div style={{marginBottom:10}}>
-                  <div style={{fontFamily:fontH,fontSize:10,color:RED,letterSpacing:3,marginBottom:6}}>ALERTAS</div>
-                  {athleteAnalysis.alertas.map((a,i)=><div key={i} style={{fontFamily:fontB,fontSize:14,color:"#e09090",marginBottom:4}}>⚠ {a}</div>)}
-                </div>
-              )}
-              {athleteAnalysis.proximo_objetivo&&<div style={{padding:12,background:"#0e0c0a",border:`1px solid ${GOLD_DIM}`,fontFamily:fontB,fontStyle:"italic",color:GOLD,fontSize:14,marginTop:10}}>Próximo objetivo: {athleteAnalysis.proximo_objetivo}</div>}
+              <div style={{fontFamily:fontH,fontSize:10,color:GOLD_DIM,letterSpacing:2,marginBottom:12}}>INTENSIDAD: <span style={{color:MARBLE}}>{athleteAnalysis.intensidad?.toUpperCase()}</span> · VOLUMEN: <span style={{color:MARBLE}}>{athleteAnalysis.volumen_total}kg</span></div>
+              {athleteAnalysis.mejoras?.length>0&&<div style={{marginBottom:10}}><div style={{fontFamily:fontH,fontSize:10,color:GOLD,letterSpacing:3,marginBottom:6}}>MEJORAS</div>{athleteAnalysis.mejoras.map((m,i)=><div key={i} style={{fontFamily:fontB,fontSize:14,color:MARBLE,marginBottom:4}}>· {m}</div>)}</div>}
+              {athleteAnalysis.alertas?.length>0&&<div style={{marginBottom:10}}><div style={{fontFamily:fontH,fontSize:10,color:RED,letterSpacing:3,marginBottom:6}}>ALERTAS</div>{athleteAnalysis.alertas.map((a,i)=><div key={i} style={{fontFamily:fontB,fontSize:14,color:"#e09090",marginBottom:4}}>⚠ {a}</div>)}</div>}
+              {athleteAnalysis.proximo_objetivo&&<div style={{padding:12,background:"#0e0c0a",border:`1px solid ${GOLD_DIM}`,fontFamily:fontB,fontStyle:"italic",color:GOLD,fontSize:14,marginTop:10}}>Próximo: {athleteAnalysis.proximo_objetivo}</div>}
               {athleteAnalysis.consejo_recuperacion&&<div style={{fontFamily:fontB,fontStyle:"italic",color:"#888",fontSize:13,marginTop:10}}>Recuperación: {athleteAnalysis.consejo_recuperacion}</div>}
             </div>
           )}
-
           <div style={panel}>
             <SectionTitle icon="◐" title="Historial por Ejercicio" subtitle="Progresión de 1RM"/>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8,marginBottom:12}}>
@@ -874,14 +1022,8 @@ Responde SOLO JSON sin backticks:
             {weeklyPlan&&(
               <div style={{marginTop:14}}>
                 <div style={{display:"flex",gap:20,marginBottom:12}}>
-                  <div>
-                    <div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:3}}>MESOCICLO</div>
-                    <div style={{fontFamily:fontH,fontSize:18,color:GOLD,fontWeight:600}}>{weeklyPlan.mesociclo}</div>
-                  </div>
-                  <div>
-                    <div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:3}}>SEMANA</div>
-                    <div style={{fontFamily:fontH,fontSize:18,color:MARBLE,fontWeight:600}}>{weeklyPlan.semana_mesociclo}/8</div>
-                  </div>
+                  <div><div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:3}}>MESOCICLO</div><div style={{fontFamily:fontH,fontSize:18,color:GOLD,fontWeight:600}}>{weeklyPlan.mesociclo}</div></div>
+                  <div><div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:3}}>SEMANA</div><div style={{fontFamily:fontH,fontSize:18,color:MARBLE,fontWeight:600}}>{weeklyPlan.semana_mesociclo}/8</div></div>
                   {weeklyPlan.deload&&<div style={{padding:"6px 14px",border:`1px solid ${GOLD}`,color:GOLD,fontFamily:fontH,fontSize:10,letterSpacing:2,alignSelf:"flex-start",marginTop:4}}>DELOAD</div>}
                 </div>
                 {weeklyPlan.objetivo_semana&&<div style={{fontFamily:fontB,fontStyle:"italic",color:GOLD,fontSize:15,marginBottom:12}}>"{weeklyPlan.objetivo_semana}"</div>}
@@ -891,23 +1033,16 @@ Responde SOLO JSON sin backticks:
                       <div style={{fontFamily:fontH,fontSize:12,color:GOLD,letterSpacing:3,textTransform:"uppercase"}}>{d.dia}</div>
                       <div style={{fontFamily:fontH,fontSize:10,color:MARBLE,letterSpacing:2}}>{d.tipo}</div>
                     </div>
-                    <div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:2,marginBottom:4}}>{d.musculos?.join(" · ")} · {d.rep_range} reps · {d.intensidad_pct}% · {d.volumen_series} series</div>
-                    {(d.ejercicios_clave||[]).map((ej,j)=>(
-                      <div key={j} style={{fontFamily:fontB,fontSize:13,color:"#888",fontStyle:"italic",marginBottom:2}}>— {ej}</div>
-                    ))}
+                    <div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:2,marginBottom:4}}>{d.musculos?.join(" · ")} · {d.rep_range} · {d.intensidad_pct}% · {d.volumen_series} series</div>
+                    {(d.ejercicios_clave||[]).map((ej,j)=><div key={j} style={{fontFamily:fontB,fontSize:13,color:"#888",fontStyle:"italic",marginBottom:2}}>— {ej}</div>)}
                     {d.notas&&<div style={{fontFamily:fontB,fontSize:12,color:GOLD_DIM,fontStyle:"italic",marginTop:4}}>{d.notas}</div>}
                   </div>
                 ))}
-                {weeklyPlan.consejo_periodizacion&&(
-                  <div style={{marginTop:12,padding:12,background:"#0e0c0a",border:`1px solid ${GOLD_DIM}`,fontFamily:fontB,fontStyle:"italic",color:MARBLE,fontSize:14}}>
-                    ◆ {weeklyPlan.consejo_periodizacion}
-                  </div>
-                )}
+                {weeklyPlan.consejo_periodizacion&&<div style={{marginTop:12,padding:12,background:"#0e0c0a",border:`1px solid ${GOLD_DIM}`,fontFamily:fontB,fontStyle:"italic",color:MARBLE,fontSize:14}}>◆ {weeklyPlan.consejo_periodizacion}</div>}
               </div>
             )}
             {!weeklyPlan&&!loadingPlan&&<div style={{fontFamily:fontB,fontStyle:"italic",color:"#666",textAlign:"center",padding:"20px 0"}}>— Genera tu plan periodizado personalizado —</div>}
           </div>
-
           <div style={panel}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
               <SectionTitle icon="◐" title="Calendario" subtitle={`${MONTHS[planMonth]} ${planYear}`}/>
@@ -925,19 +1060,12 @@ Responde SOLO JSON sin backticks:
                 const d=i+1;
                 const dateStr=`${planYear}-${String(planMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
                 const hasWorkout=!!workouts[dateStr];
-                const hasNote=!!calDayNote[dateStr];
                 const isToday=dateStr===today_str();
                 const isSelected=selectedCalDay===dateStr;
                 return (
-                  <div key={d} onClick={()=>toggleCalNote(dateStr)} style={{
-                    textAlign:"center",padding:"8px 2px",cursor:"pointer",
-                    background:isSelected?GOLD:isToday?"#1c1814":"transparent",
-                    border:`1px solid ${isSelected?GOLD:isToday?GOLD_DIM:hasWorkout?STONE:"transparent"}`,
-                    position:"relative"
-                  }}>
+                  <div key={d} onClick={()=>toggleCalNote(dateStr)} style={{textAlign:"center",padding:"8px 2px",cursor:"pointer",background:isSelected?GOLD:isToday?"#1c1814":"transparent",border:`1px solid ${isSelected?GOLD:isToday?GOLD_DIM:hasWorkout?STONE:"transparent"}`}}>
                     <div style={{fontFamily:fontH,fontSize:11,color:isSelected?BG_DARK:isToday?GOLD:MARBLE}}>{d}</div>
                     {hasWorkout&&<div style={{width:4,height:4,borderRadius:"50%",background:isSelected?BG_DARK:GOLD,margin:"2px auto 0"}}/>}
-                    {hasNote&&<div style={{width:4,height:4,borderRadius:"50%",background:isSelected?BG_DARK:"#5a7a5a",margin:"2px auto 0"}}/>}
                   </div>
                 );
               })}
@@ -950,12 +1078,8 @@ Responde SOLO JSON sin backticks:
               </div>
             )}
           </div>
-
           <div style={panel}>
             <SectionTitle icon="↯" title="Mesociclos · 12 Meses"/>
-            <p style={{fontFamily:fontB,fontStyle:"italic",color:"#888",fontSize:14,lineHeight:1.6,marginTop:8}}>
-              Cada mesociclo dura 8 semanas con deload en la semana 8. El plan se adapta a tu fase: {profile.phase}.
-            </p>
             <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:4,marginTop:14}}>
               {MONTHS.map((m,i)=>{
                 const meso=Math.floor(i/2)+1;
@@ -968,9 +1092,7 @@ Responde SOLO JSON sin backticks:
                 );
               })}
             </div>
-            <div style={{marginTop:12,fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:2}}>
-              MESOCICLO ACTUAL: {Math.floor(new Date().getMonth()/2)+1} · SEMANA {Math.ceil(new Date().getDate()/7)}/8
-            </div>
+            <div style={{marginTop:12,fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:2}}>MESOCICLO ACTUAL: {Math.floor(new Date().getMonth()/2)+1} · SEMANA {Math.ceil(new Date().getDate()/7)}/8</div>
           </div>
         </>}
 
@@ -985,7 +1107,7 @@ Responde SOLO JSON sin backticks:
             </label>
           </div>
           {photos.length===0
-            ?<div style={{...panel,textAlign:"center"}}><div style={{fontFamily:fontB,fontStyle:"italic",color:"#666",padding:20}}>— Aún no hay imágenes en tu memoria visual —</div></div>
+            ?<div style={{...panel,textAlign:"center"}}><div style={{fontFamily:fontB,fontStyle:"italic",color:"#666",padding:20}}>— Aún no hay imágenes —</div></div>
             :<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 {photos.map((p,i)=>(
                   <div key={i} style={{background:BG_PANEL,border:`1px solid ${STONE}`,padding:8}}>
@@ -1141,9 +1263,96 @@ Responde SOLO JSON sin backticks:
           <div style={{...panel,borderColor:"#3a2020"}}>
             <SectionTitle icon="⚠" title="Zona Roja"/>
             <p style={{fontFamily:fontB,fontStyle:"italic",color:"#777",fontSize:13,marginTop:8}}>Borrar todo el historial es irreversible.</p>
-            <button onClick={()=>{if(window.confirm("¿Borrar TODOS los datos? Esto no se puede deshacer.")){ls_del("oly_logs");ls_del("oly_photos");ls_del("oly_workouts");setLogs({});setPhotos({});setWorkouts({});notify("Datos borrados");}}} style={{width:"100%",marginTop:10,padding:12,background:"transparent",border:`1px solid ${RED}`,color:RED,fontFamily:fontH,fontSize:11,letterSpacing:3,cursor:"pointer",textTransform:"uppercase"}}>Borrar Historial Completo</button>
+            <button onClick={()=>{if(window.confirm("¿Borrar TODOS los datos?")){ls_del("oly_logs");ls_del("oly_photos");ls_del("oly_workouts");setLogs({});setPhotos([]);setWorkouts({});notify("Datos borrados");}}} style={{width:"100%",marginTop:10,padding:12,background:"transparent",border:`1px solid ${RED}`,color:RED,fontFamily:fontH,fontSize:11,letterSpacing:3,cursor:"pointer",textTransform:"uppercase"}}>Borrar Historial Completo</button>
           </div>
         </>}
+
+        {/* ── GUÍA ── */}
+        {tab==="guide"&&(
+          <div style={{paddingBottom:20}}>
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <div style={{fontFamily:fontH,fontSize:20,color:GOLD,letterSpacing:8,fontWeight:600}}>CODEX OLYMPUS</div>
+              <div style={{fontFamily:fontH,fontSize:9,color:GOLD_DIM,letterSpacing:4,marginTop:4}}>GUÍA DEL GLADIADOR DIGITAL</div>
+              <Meander/>
+            </div>
+
+            <GuideSection icon="◈" title="Pestaña HOY">
+              Tu campo de batalla diario. Aquí controlas todo lo que sucede en el día.
+              <br/><br/>
+              <GuideTip>El <b>Edicto Calórico</b> es tu marcador principal: la barra grande muestra tu progreso hacia la meta calórica. El mensaje de IA se actualiza automáticamente según la hora y tu ingesta.</GuideTip>
+              <GuideTip>Registra <b>Actividades</b> para descontar calorías quemadas. Usa el botón <b>×</b> para eliminar registros incorrectos.</GuideTip>
+              <GuideTip>Registra tu <b>Peso</b> siempre en ayunas y en las mismas condiciones para comparaciones válidas.</GuideTip>
+              <GuideTip>Hidratación: 2.5–3L mínimo para reducir retención. Cada barra representa ~300ml.</GuideTip>
+            </GuideSection>
+
+            <GuideSection icon="ψ" title="Pestaña Rituales">
+              Hábitos diarios que marcan la diferencia en composición corporal y bienestar.
+              <br/><br/>
+              <GuideTip>Usa <b>Generar Rituales con IA</b>: escribe tu objetivo específico (ej: "mejorar el sueño", "reducir cortisol") y la IA crea rituales personalizados para ti.</GuideTip>
+              <GuideTip>Marca cada ritual como cumplido a lo largo del día. El objetivo es completar todos antes de dormir.</GuideTip>
+              <GuideTip>El <b>Stack Personal</b> es tu registro de suplementos y hábitos. Úsalo como recordatorio visual diario.</GuideTip>
+            </GuideSection>
+
+            <GuideSection icon="🍇" title="Pestaña Ambrosía">
+              Tu registro nutricional potenciado con IA.
+              <br/><br/>
+              <GuideTip>Describe tus comidas en lenguaje natural. Cuanto más detallado, más preciso el análisis (ej: "200g pechuga de pollo a la plancha con 150g arroz integral").</GuideTip>
+              <GuideTip>La <b>barra de proteína</b> es clave: la meta de {Math.round(2.2*(profile.weight||81))}g/día ({profile.weight}kg × 2.2g) asegura síntesis muscular óptima para hipertrofia.</GuideTip>
+              <GuideTip>Elimina entradas incorrectas con el botón <b>×</b> junto a cada comida registrada.</GuideTip>
+              <GuideTip>El análisis incluye sodio — fundamental para controlar la retención de líquidos.</GuideTip>
+            </GuideSection>
+
+            <GuideSection icon="🏛" title="Pestaña Atleta">
+              Tu diario de entrenamiento con análisis de hipertrofia.
+              <br/><br/>
+              <GuideTip>El rango <b>6–8 repeticiones</b> al 80–85% del 1RM es el rango óptimo para hipertrofia según la evidencia científica actual.</GuideTip>
+              <GuideTip>El <b>1RM estimado</b> se calcula con la fórmula de Epley: 1RM = peso × (1 + reps/30). Útil para programar la carga de la próxima sesión.</GuideTip>
+              <GuideTip>El <b>análisis IA</b> evalúa volumen total, intensidad y da una puntuación 1–10. Úsalo para comparar sesiones semana a semana.</GuideTip>
+              <GuideTip>El <b>historial por ejercicio</b> muestra la evolución de tu 1RM a lo largo del tiempo — la métrica más honesta de progreso.</GuideTip>
+              <GuideTip>Elimina ejercicios registrados por error con el botón <b>×</b>.</GuideTip>
+            </GuideSection>
+
+            <GuideSection icon="◐" title="Pestaña Planificación">
+              Periodización y gestión del entrenamiento a largo plazo.
+              <br/><br/>
+              <GuideTip>El <b>Plan Semanal IA</b> genera una semana completa de entrenamiento basada en tu rutina, fase y mesociclo actual. Regenera cada semana.</GuideTip>
+              <GuideTip>Un <b>mesociclo</b> dura 8 semanas con deload en la última. El deload reduce volumen e intensidad para permitir supercompensación.</GuideTip>
+              <GuideTip>Usa el <b>calendario</b> para añadir notas por día: lesiones, viajes, días de descanso extra. Los puntos dorados indican días con entrenamiento registrado.</GuideTip>
+            </GuideSection>
+
+            <GuideSection icon="◉" title="Pestaña Oráculo">
+              Diagnóstico completo de tu composición corporal con IA.
+              <br/><br/>
+              <GuideTip>Sube una foto en <b>Progreso</b> antes de consultar al Oráculo para obtener análisis visual además del análisis de datos.</GuideTip>
+              <GuideTip>Consulta el Oráculo cada 2 semanas para tracking de cambios. El análisis considera promedios de 7 días, no solo el día actual.</GuideTip>
+            </GuideSection>
+
+            <GuideSection icon="↯" title="Métricas Clave">
+              <GuideDef term="TMB" def="Tasa Metabólica Basal. Calorías que tu cuerpo quema en reposo absoluto. Calculado con la fórmula de Mifflin-St Jeor."/>
+              <GuideDef term="TDEE" def="Gasto Energético Total Diario. Tu TMB multiplicado por tu factor de actividad. Es tu meta calórica de mantenimiento."/>
+              <GuideDef term="1RM" def="Una Repetición Máxima. El peso máximo que puedes levantar en un movimiento una sola vez. Estimado con la fórmula de Epley."/>
+              <GuideDef term="Mesociclo" def="Bloque de entrenamiento de 8 semanas con progresión planificada de volumen e intensidad, seguido de deload."/>
+              <GuideDef term="Deload" def="Semana de reducción deliberada de carga (50-60% del volumen habitual) para recuperación y supercompensación."/>
+              <GuideDef term="Déficit calórico" def="Consumir menos calorías de las que gastas. Necesario para cutting/definición. 300-500 kcal de déficit es lo recomendado."/>
+              <GuideDef term="Superávit calórico" def="Consumir más calorías de las que gastas. Necesario para volumen/hipertrofia. 200-300 kcal de superávit controlado."/>
+              <GuideDef term="2.2g proteína/kg" def="El estándar de proteína para hipertrofia máxima. Para un atleta de 81kg: 178g/día como mínimo."/>
+            </GuideSection>
+
+            <GuideSection icon="✦" title="Tips para Sacar el Máximo">
+              <GuideTip>Registra comidas y actividades en tiempo real, no al final del día. La memoria es imprecisa.</GuideTip>
+              <GuideTip>La constancia supera la perfección. 70% de adherencia sostenida &gt; 100% por 2 semanas.</GuideTip>
+              <GuideTip>Pésate siempre en las mismas condiciones: mañana, en ayunas, después de ir al baño.</GuideTip>
+              <GuideTip>El progreso real se mide en semanas, no en días. Compara fotos y métricas cada 2–4 semanas.</GuideTip>
+              <GuideTip>Cuando el Oráculo da una alerta, actúa en las próximas 48h — no en "la semana que viene".</GuideTip>
+              <GuideTip>Los rituales anti-edema funcionan en conjunto. No basta con solo hidratarse si el sodio está alto.</GuideTip>
+            </GuideSection>
+
+            <div style={{textAlign:"center",padding:"20px 0",borderTop:`1px solid ${STONE}`,marginTop:8}}>
+              <div style={{fontFamily:fontH,fontSize:10,color:GOLD_DIM,letterSpacing:4}}>OLYMPUS FITNESS</div>
+              <div style={{fontFamily:"Cormorant Garamond,Georgia,serif",fontStyle:"italic",color:"#555",fontSize:13,marginTop:6}}>"Forja tu cuerpo como el bronce, tu mente como el mármol."</div>
+            </div>
+          </div>
+        )}
 
       </div>
       <div style={{textAlign:"center",padding:"30px 16px",color:"#444",fontFamily:fontB,fontStyle:"italic",fontSize:13}}>
